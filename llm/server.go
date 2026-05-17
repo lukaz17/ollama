@@ -222,7 +222,10 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 		}
 	}
 
-	kvct := strings.ToLower(envconfig.KvCacheType())
+	kvct := strings.ToLower(opts.KvCacheType)
+	if kvct == "" {
+		kvct = strings.ToLower(envconfig.KvCacheType())
+	}
 
 	if tok == nil {
 		flashAttention := ml.FlashAttentionAuto
@@ -1473,18 +1476,18 @@ object ::=
   "{" ws (
          string ":" ws value
     ("," ws string ":" ws value)*
-  )? ws "}" 
+  )? ws "}"
 array  ::=
   "[" ws (
             value
     ("," ws value)*
-  )? ws "]" 
+  )? ws "]"
 string ::=
   "\"" (
     [^"\\\x7F\x00-\x1F] |
     "\\" (["\\/bfnrt] | "u" [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F] [0-9a-fA-F]) # escapes
-  )* "\"" 
-number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)? 
+  )* "\""
+number ::= ("-"? ([0-9] | [1-9] [0-9]*)) ("." [0-9]+)? ([eE] [-+]? [0-9]+)?
 # Optional space: by convention, applied in this grammar after literal chars when allowed
 ws ::= ([ \t\n] ws)?
 `
