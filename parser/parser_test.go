@@ -572,6 +572,7 @@ func TestParseFileParameters(t *testing.T) {
 		"num_gpu 1":                    {"num_gpu", "1"},
 		"main_gpu 1":                   {"main_gpu", "1"},
 		"use_mmap true":                {"use_mmap", "true"},
+		"kv_cache q8_0":                {"kv_cache", "q8_0"},
 		"num_thread 1":                 {"num_thread", "1"},
 		"num_keep 1":                   {"num_keep", "1"},
 		"seed 1":                       {"seed", "1"},

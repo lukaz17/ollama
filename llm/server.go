@@ -116,6 +116,10 @@ func NewLlamaServer(systemInfo ml.SystemInfo, gpus []ml.DeviceInfo, modelPath st
 	}
 
 	kvct := strings.ToLower(envconfig.KvCacheType())
+	kvctOverride := strings.ToLower(opts.KvCacheType)
+	if kvctOverride != "" {
+		kvct = kvctOverride
+	}
 	return NewLlamaServerRunner(gpus, modelPath, f, adapters, projectors, opts, numParallel, kvct, config)
 }
 
