@@ -24,7 +24,7 @@ jobs:
         run: |
           echo GOFLAGS="'-ldflags=-w -s \"-X=github.com/ollama/ollama/version.Version=${GITHUB_REF_NAME#v}\" \"-X=github.com/ollama/ollama/server.mode=release\"'" | tee -a $GITHUB_OUTPUT
           echo VERSION="${GITHUB_REF_NAME#v}" | tee -a $GITHUB_OUTPUT
-          echo vendorsha=$(cat LLAMA_CPP_VERSION)-$(cat MLX_VERSION)-$(cat MLX_C_VERSION) | tee -a $GITHUB_OUTPUT
+          echo vendorsha=$(cat LLAMA_CPP_VERSION) | tee -a $GITHUB_OUTPUT
 
   darwin-build:
     runs-on: macos-26-xlarge
@@ -119,41 +119,13 @@ jobs:
             preset: Vulkan
             build-steps: vulkan
             install: https://sdk.lunarg.com/sdk/download/1.4.321.1/windows/vulkansdk-windows-X64-1.4.321.1.exe
-          - os: windows
-            arch: amd64
-            preset: 'MLX CUDA 13'
-            build-steps: mlxCuda13
-            build-parallel: '16'
-            cmake-cuda-flags: '-t 6'
-            install: https://developer.download.nvidia.com/compute/cuda/13.0.0/local_installers/cuda_13.0.0_windows.exe
-            cudnn-install: https://developer.download.nvidia.com/compute/cudnn/redist/cudnn/windows-x86_64/cudnn-windows-x86_64-9.18.1.3_cuda13-archive.zip
-            cuda-components:
-              - '"cudart"'
-              - '"nvcc"'
-              - '"cublas"'
-              - '"cublas_dev"'
-              - '"cufft"'
-              - '"cufft_dev"'
-              - '"nvrtc"'
-              - '"nvrtc_dev"'
-              - '"crt"'
-              - '"nvvm"'
-              - '"nvptxcompiler"'
-            cuda-version: '13.0'
     runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
     environment: release
     env:
       GOFLAGS: ${{ needs.setup-environment.outputs.GOFLAGS }}
       VERSION: ${{ needs.setup-environment.outputs.VERSION }}
     steps:
-      - if: startsWith(matrix.preset, 'MLX ')
-        name: Increase pagefile to 200 GB
-        uses: al-cheb/configure-pagefile-action@v1.5
-        with:
-          minimum-size: 16GB
-          maximum-size: 200GB
-          disk-root: "D:"
-      - name: Install system dependencies
+name: Install system dependencies
         run: |
           choco install -y --no-progress ccache ninja
           if (Get-Command ccache -ErrorAction SilentlyContinue) {
@@ -222,23 +194,6 @@ jobs:
           }
           echo "$vulkanPath\bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           echo "VULKAN_SDK=$vulkanPath" >> $env:GITHUB_ENV
-      - if: startsWith(matrix.preset, 'MLX ')
-        name: Install cuDNN for MLX
-        run: |
-          $ErrorActionPreference = "Stop"
-          $cudnnRoot = "C:\Program Files\NVIDIA\CUDNN"
-          if ("${{ steps.cache-install.outputs.cache-hit }}" -ne 'true') {
-            Invoke-WebRequest -Uri "${{ matrix.cudnn-install }}" -OutFile "cudnn.zip"
-            Expand-Archive -Path cudnn.zip -DestinationPath cudnn-extracted
-            $cudnnDir = (Get-ChildItem -Path cudnn-extracted -Directory)[0].FullName
-            New-Item -ItemType Directory -Force -Path $cudnnRoot
-            Copy-Item -Path "$cudnnDir\*" -Destination "$cudnnRoot\" -Recurse
-          }
-
-          echo "CUDNN_ROOT_DIR=$cudnnRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "CUDNN_INCLUDE_PATH=$cudnnRoot\include" | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "CUDNN_LIBRARY_PATH=$cudnnRoot\lib\x64" | Out-File -FilePath $env:GITHUB_ENV -Append
-          echo "$cudnnRoot\bin\x64" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
       - if: ${{ !cancelled() && steps.cache-install.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v4
         with:
@@ -308,8 +263,6 @@ jobs:
           cache-dependency-path: |
             go.sum
             LLAMA_CPP_VERSION
-            MLX_VERSION
-            MLX_C_VERSION
       - name: Verify gcc is actually clang
         run: |
           $ErrorActionPreference='Continue'
@@ -326,14 +279,13 @@ jobs:
         with:
           node-version: "20"
       - run: |
-          ./scripts/build_windows ollama ollamaArm64 app appArm64
+          ./scripts/build_windows ollama app
       - name: Verify Windows build payloads
         shell: bash
         run: |
           set -euo pipefail
           for payload in \
-            dist/windows-amd64/ollama.exe \
-            dist/windows-arm64/ollama.exe
+            dist/windows-amd64/ollama.exe
           do
             [ -f "$payload" ] || { echo "missing $payload"; exit 1; }
           done
@@ -397,9 +349,7 @@ jobs:
           set -euo pipefail
           for payload in \
             dist/windows-amd64/ollama.exe \
-            dist/windows-amd64/lib/ollama/llama-server.exe \
-            dist/windows-arm64/ollama.exe \
-            dist/windows-arm64/lib/ollama/llama-server.exe
+            dist/windows-amd64/lib/ollama/llama-server.exe
           do
             [ -f "$payload" ] || { echo "missing $payload"; exit 1; }
           done
@@ -427,21 +377,9 @@ jobs:
           - arch: amd64
             target: llama-server-cuda_v13
           - arch: amd64
-            target: mlx
-          - arch: amd64
             target: llama-server-rocm_v7_2
           - arch: amd64
             target: llama-server-vulkan
-          - arch: arm64
-            target: llama-server-cpu
-          - arch: arm64
-            target: llama-server-cuda_v12
-          - arch: arm64
-            target: llama-server-cuda_v13
-          - arch: arm64
-            target: jetpack-5
-          - arch: arm64
-            target: jetpack-6
     runs-on: ${{ matrix.arch == 'arm64' && 'linux-arm64' || 'linux' }}
     environment: release
     needs: setup-environment
@@ -454,26 +392,6 @@ jobs:
         with:
           username: ${{ vars.DOCKER_USER }}
           password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
-      - if: matrix.target == 'mlx'
-        name: Increase Linux swap to 200 GB
-        shell: bash
-        run: |
-          set -e
-          SWAP_PATH=/swapfile-mlx
-          SWAP_SIZE_GB=200
-          if [ -f "$SWAP_PATH" ]; then
-              sudo swapoff "$SWAP_PATH" 2>/dev/null || true
-              sudo rm -f "$SWAP_PATH"
-          fi
-          if ! sudo fallocate -l ${SWAP_SIZE_GB}G "$SWAP_PATH" 2>/dev/null; then
-              echo "fallocate unsupported, falling back to dd"
-              sudo dd if=/dev/zero of="$SWAP_PATH" bs=1M count=$((SWAP_SIZE_GB * 1024))
-          fi
-          sudo chmod 600 "$SWAP_PATH"
-          sudo mkswap "$SWAP_PATH"
-          sudo swapon "$SWAP_PATH"
-          swapon --show
-          free -h
       - uses: docker/build-push-action@v6
         with:
           context: .
@@ -528,34 +446,14 @@ jobs:
               GOFLAGS
               APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
               APT_PORTS_MIRROR=http://azure.ports.ubuntu.com/ubuntu-ports
-              OLLAMA_MLX_BUILD_JOBS=16
-              OLLAMA_MLX_NVCC_THREADS=6
             cache-from: |
               type=registry,ref=ollama/release:cache-amd64-llama-server-cpu
               type=registry,ref=ollama/release:cache-amd64-llama-server-cuda_v12
               type=registry,ref=ollama/release:cache-amd64-llama-server-cuda_v13
-              type=registry,ref=ollama/release:cache-amd64-mlx
               type=registry,ref=ollama/release:cache-amd64-llama-server-rocm_v7_2
               type=registry,ref=ollama/release:cache-amd64-llama-server-vulkan
               type=registry,ref=${{ vars.DOCKER_REPO }}:latest
-          - os: linux
-            arch: amd64
-            suffix: '-rocm'
-            archive-target: image-archive
-            build-args: |
-              CGO_CFLAGS
-              CGO_CXXFLAGS
-              GOFLAGS
-              FLAVOR=rocm
-              APT_MIRROR=http://azure.archive.ubuntu.com/ubuntu
-              APT_PORTS_MIRROR=http://azure.ports.ubuntu.com/ubuntu-ports
-              OLLAMA_MLX_BUILD_JOBS=16
-              OLLAMA_MLX_NVCC_THREADS=6
-            cache-from: |
-              type=registry,ref=ollama/release:cache-amd64-llama-server-cpu
-              type=registry,ref=ollama/release:cache-amd64-llama-server-rocm_v7_2
-              type=registry,ref=${{ vars.DOCKER_REPO }}:latest
-    runs-on: ${{ matrix.arch == 'arm64' && format('{0}-{1}', matrix.os, matrix.arch) || matrix.os }}
+    runs-on: linux
     environment: release
     needs: [setup-environment, linux-depends]
     env:
@@ -563,30 +461,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
-        with:
-          username: ${{ vars.DOCKER_USER }}
-          password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
-      - id: build-push
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          platforms: ${{ matrix.os }}/${{ matrix.arch }}
-          provenance: false
-          sbom: false
-          build-args: ${{ matrix.build-args }}
-          outputs: type=image,name=${{ vars.DOCKER_REPO }},push-by-digest=true,name-canonical=true,push=true
-          cache-from: ${{ matrix.cache-from }}
-          cache-to: type=inline
-      - run: |
-          mkdir -p ${{ matrix.os }}-${{ matrix.arch }}
-          echo "${{ steps.build-push.outputs.digest }}" >${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}.txt
-        working-directory: ${{ runner.temp }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: digest-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}
-          path: |
-            ${{ runner.temp }}/${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.suffix }}.txt
       - uses: docker/build-push-action@v6
         with:
           context: .
@@ -619,16 +493,10 @@ jobs:
               lib/ollama/llama-server*|lib/ollama/llama-quantize*)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
               lib/ollama/cuda_v*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
               lib/ollama/vulkan*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in ;;
-              lib/ollama/mlx*)           echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-mlx.tar.in ;;
-              lib/ollama/include*)       echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-mlx.tar.in ;;
-              lib/ollama/cuda_jetpack5)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack5.tar.in ;;
-              lib/ollama/cuda_jetpack6)  echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-jetpack6.tar.in ;;
               lib/ollama/rocm_v*)        echo $COMPONENT >>ollama-${{ matrix.os }}-${{ matrix.arch }}-rocm.tar.in ;;
             esac
           done
         working-directory: dist/${{ matrix.os }}-${{ matrix.arch }}
-      - if: matrix.suffix == '-rocm'
-        run: rm -f dist/${{ matrix.os }}-${{ matrix.arch }}/ollama-${{ matrix.os }}-${{ matrix.arch }}.tar.in
       - run: |
           echo "Manifests"
           for ARCHIVE in dist/${{ matrix.os }}-${{ matrix.arch }}/*.tar.in ; do
@@ -646,45 +514,11 @@ jobs:
           path: |
             *.tar.zst
 
-  # Merge Docker images for the same flavor into a single multi-arch manifest
-  docker-merge-push:
-    strategy:
-      matrix:
-        suffix: ['', '-rocm']
-    runs-on: linux
-    environment: release
-    needs: [docker-build-push]
-    steps:
-      - uses: docker/login-action@v3
-        with:
-          username: ${{ vars.DOCKER_USER }}
-          password: ${{ secrets.DOCKER_ACCESS_TOKEN }}
-      - id: metadata
-        uses: docker/metadata-action@v4
-        with:
-          flavor: |
-            latest=false
-            suffix=${{ matrix.suffix }}
-          images: |
-            ${{ vars.DOCKER_REPO }}
-          tags: |
-            type=ref,enable=true,priority=600,prefix=pr-,event=pr
-            type=semver,pattern={{version}}
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: digest-*
-          path: ${{ runner.temp }}
-          merge-multiple: true
-      - run: |
-          docker buildx imagetools create $(echo '${{ steps.metadata.outputs.json }}' | jq -cr '.tags | map("-t", .) | join(" ")') $(cat *-${{ matrix.suffix }}.txt | xargs printf '${{ vars.DOCKER_REPO }}@%s ')
-          docker buildx imagetools inspect ${{ vars.DOCKER_REPO }}:${{ steps.metadata.outputs.version }}
-        working-directory: ${{ runner.temp }}
-
   # Final release process
   release:
     runs-on: ubuntu-latest
     environment: release
-    needs: [darwin-build, windows-app, docker-build-push]
+    needs: [windows-app, docker-build-push]
     permissions:
       contents: write
     env:
@@ -709,7 +543,6 @@ jobs:
             dist/install.ps1
             dist/install.sh
             dist/ollama-windows-amd64.zip
-            dist/ollama-windows-arm64.zip
           )
           for payload in "${required[@]}"; do
             if [ ! -f "$payload" ]; then
@@ -739,7 +572,7 @@ jobs:
       - name: Upload release artifacts
         run: |
           pids=()
-          for payload in dist/*.txt dist/*.zip dist/*.tgz dist/*.tar.zst dist/*.exe dist/*.dmg dist/*.ps1 dist/*.sh ; do
+          for payload in dist/*.txt dist/*.zip dist/*.tgz dist/*.tar.zst dist/*.exe dist/*.ps1 dist/*.sh ; do
             echo "Uploading $payload"
             gh release upload ${GITHUB_REF_NAME} $payload --clobber &
             pids+=($!)
